@@ -10,6 +10,7 @@
       El negativo del puente debe ser el GND del Arduino.
     - V1 -> R3 = 1.8k -> LED del 4N25 (pines 1-2), con D1 (1N4007) en
       antiparalelo. Colector (pin 5) -> D2 con R4 = 10k a 5V. Emisor (pin 4) a GND.
+      Verificado en Proteus: D2 recibe 2 flancos FALLING por ciclo.
     - LCD 16x2 en modo 4 bits: RS=7, E=6, D4=5, D5=4, D6=3, D7=8.
 
   QUE MIDE REALMENTE ESTE HARDWARE (importante):
@@ -122,15 +123,15 @@ const unsigned int MAX_MUESTRAS_RMS = 16000; // evita desbordar sumaD2 (uint32)
 // FRECUENCIA
 // ----------------------------------------------------------------------------
 // Flancos de bajada en D2 por cada ciclo de la senal de entrada.
-// En el esquematico el LED del 4N25 se alimenta con AC a traves de R3 y D1
-// esta en ANTIPARALELO: el LED solo conduce en el semiciclo POSITIVO.
-//   -> D2 esta en LOW durante el semiciclo positivo y en HIGH en el negativo
-//   -> 1 flanco de bajada por ciclo.
-// Por eso NO se divide entre 2. VERIFICARLO con el osciloscopio (canal en D2)
-// o con el "Periodo" que se imprime por Serial (debe ser 1/f, no 1/(2f)).
-const uint8_t PULSOS_POR_CICLO = 1;
+// VERIFICADO EN PROTEUS: con 60 Hz de entrada y PULSOS_POR_CICLO = 1 se
+// mostraban 120 Hz, es decir, el circuito genera 2 flancos FALLING por ciclo
+// (uno por semiciclo). Por eso el original dividia entre 2, y era correcto.
+// Comprobacion: el "Periodo" del Serial muestra el periodo de la senal (ya
+// multiplicado por PULSOS_POR_CICLO); con 60 Hz debe ser ~16667 us.
+const uint8_t PULSOS_POR_CICLO = 2;
 // Rechazo de glitches: se ignoran flancos a menos de 500 us del anterior
-// valido. Limita la frecuencia maxima medible a 1/500us = 2000 Hz.
+// valido. Limita a 2000 flancos/s: con 2 flancos por ciclo, la frecuencia
+// maxima medible de la senal es ~1000 Hz.
 const unsigned long PERIODO_MINIMO_US = 500UL;
 // Sin flancos durante este tiempo -> frecuencia = 0 (sin senal).
 // Define la frecuencia minima medible: 1 / 2 s = 0.5 Hz.
@@ -445,9 +446,10 @@ void setup() {
   lcd.setCursor(0, 1);
   lcd.print("Iniciando...");
 
-  // FALLING = el transistor del 4N25 empieza a conducir = comienza el
-  // semiciclo positivo (con un pequeno retardo que depende de la amplitud;
-  // el retardo es igual en todos los ciclos, asi que no afecta al periodo).
+  // FALLING = el transistor del 4N25 empieza a conducir. En este circuito
+  // ocurre una vez por semiciclo (2 por ciclo, verificado en Proteus). El
+  // retardo respecto al cruce por cero es igual en cada evento, asi que no
+  // afecta al periodo medido.
   attachInterrupt(digitalPinToInterrupt(PIN_OPTO), isrOptoacoplador, FALLING);
 
   Serial.println(F("Medidor Vrms / frecuencia"));

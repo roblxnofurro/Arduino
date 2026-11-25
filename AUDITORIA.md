@@ -3,12 +3,21 @@
 | Archivo | Contenido |
 |---|---|
 | `referencia/codigo_original/codigo_original.ino` | Código original, sin modificar |
-| `medidor_rms_frecuencia/medidor_rms_frecuencia.ino` | Código corregido |
+| `medidor_rms_frecuencia/medidor_rms_frecuencia.ino` | Código corregido (versión completa) |
+| `medidor_minimo/medidor_minimo.ino` | Código original con solo los cambios necesarios |
 | `pruebas/` | Banco de pruebas en PC (modelo del circuito + Arduino simulado) |
 
 > **Estado:** el programa corregido está validado **en simulación**, no en el montaje físico.
 > Las constantes de calibración son **provisionales**. Ninguna cifra de este documento es
 > una medición experimental. Las tablas de la Fase 5 están vacías a propósito.
+
+> ⚠️ **CORRECCIÓN IMPORTANTE (frecuencia).** La primera versión de esta auditoría afirmaba
+> que el optoacoplador genera 1 flanco por ciclo y que el `/ 2.0` del original era un error.
+> **Era falso.** Se dedujo de la imagen del esquema y el simulador modelaba esa misma
+> suposición, así que no podía detectarla. Al probarlo en Proteus, sin el `/2` la frecuencia
+> salía **duplicada** (120 Hz con 60 Hz de entrada). El circuito genera **2 flancos FALLING
+> por ciclo** y el `/ 2.0` del original **era correcto**. Ambas versiones corregidas usan
+> ahora 2 flancos por ciclo, y el simulador modela ese comportamiento por defecto (`ppc=2`).
 
 ---
 
@@ -53,16 +62,17 @@ salida del puente. El conjunto **puente + C1 es un detector de pico**: C1 se car
 
 ### 1.2 Optoacoplador: ¿uno o dos pulsos por ciclo?
 
-R3 alimenta el LED desde la fuente AC y D1 está en antiparalelo. Si el LED estuviera
-alimentado desde la salida rectificada, D1 no tendría ninguna función, porque nunca habría
-tensión inversa. Además, después de C1 la tensión es continua y no habría pulsos. Por tanto:
+**Verificado en Proteus: 2 flancos de bajada por ciclo** (uno por semiciclo). Sin dividir
+entre 2, una entrada de 60 Hz se muestra como 120 Hz.
 
-- El LED solo conduce en el **semiciclo positivo** (D1 lo protege en el negativo).
-- D2 está en LOW durante el semiciclo positivo y en HIGH en el negativo.
-- Hay **un único flanco de bajada (FALLING) por ciclo**.
+La deducción inicial a partir de la imagen (LED alimentado con AC y D1 en antiparalelo → 1
+flanco) **era incorrecta**. La resolución de la imagen no permite seguir con certeza a qué
+nodo va R3. El comportamiento observado indica que el LED recibe corriente en **ambos
+semiciclos**.
 
-Esto se dedujo del esquemático. Hay que **verificarlo** con el osciloscopio de Proteus
-(canal en D2) o con el dato `Periodo` que ahora imprime el Serial (ver la Fase 5).
+Como los dos flancos están separados medio período, el promedio de los intervalos es T/2 y
+la división entre 2 da la frecuencia correcta. Se puede confirmar con el osciloscopio de
+Proteus: un canal en V1 y otro en D2 deben mostrar 2 bajadas por cada ciclo de la senoide.
 
 ### 1.3 Lista de errores encontrados
 
@@ -71,7 +81,7 @@ corregido contra el mismo modelo del circuito.
 
 | # | Gravedad | Error | Efecto comprobado en simulación |
 |---|---|---|---|
-| E1 | **Crítico** | `frecuencia = (1e6/periodo) / 2.0`. Divide entre 2 cuando hay 1 flanco por ciclo | Entrada de 50 Hz → muestra **25.0 Hz**; 60 Hz → 30.0 Hz (−50 % en todo el rango 1–1500 Hz) |
+| ~~E1~~ | **Retirado** | ~~El `/ 2.0` de la frecuencia es un error~~. **No lo era**: el circuito genera 2 flancos por ciclo (verificado en Proteus, sección 1.2) | Con el `/2` el original muestra 60.0 Hz para 60 Hz. Quitarlo daba 120 Hz |
 | E2 | **Crítico (conceptual)** | `Vrms = Vpico/√2` se presenta como RMS, pero solo vale para senoidal pura | Cuadrada de 10 Vp (Vrms real 10 V) → muestra 7.07 V (**−29 %**); triangular de 10 Vp (real 5.77 V) → 7.07 V (**+22 %**) |
 | E3 | Alto | `CAIDA_PUENTE = 1.50` ajustada en **un solo punto** (20 Vpp en Proteus). Absorbe todos los demás errores (Vref, 1023, divisor) y no es la caída real de un puente físico | Si cada diodo real cae 0.55 V en lugar de 0.75 V: +4.0 % a 10 Vp y +7.9 % a 5 Vp. Con 0.45 V/diodo: hasta **+11.9 %** |
 | E4 | Alto (solo físico) | `REFERENCIA_ADC = 5.0` supuesta. Por USB, el pin 5V real está entre ~4.6 y 5.2 V | Error de ganancia de hasta −8 % / +4 % en todas las lecturas (no aparece en Proteus) |
@@ -98,7 +108,9 @@ No conviene cambiar lo que ya funciona bien. Estas partes estaban correctas:
   no se pierde.
 - **Desbordamiento de `micros()`:** la resta sin signo `ahora − anterior` funciona bien
   aunque haya desbordado.
-- **Filtro de 500 µs:** es adecuado para 50/60 Hz. Limita la frecuencia máxima a 2 kHz.
+- **Cálculo de la frecuencia con `/ 2.0`:** correcto, porque hay 2 flancos por ciclo (sección 1.2).
+- **Filtro de 500 µs:** es adecuado para 50/60 Hz. Con 2 flancos por ciclo limita la
+  frecuencia máxima de la señal a ~1 kHz (2000 flancos/s).
 - **25 ms de muestreo:** cubren al menos 1.25 ciclos a 50 Hz. Como A0 es continua, la
   duración no era el problema; lo era usar el máximo (E5).
 
@@ -115,8 +127,8 @@ T_eventos = Σ períodos / N                  [µs]
 f = CAL_FRECUENCIA · 10⁶ / (T_eventos · PULSOS_POR_CICLO)   [Hz]
 ```
 
-- `PULSOS_POR_CICLO = 1` (justificado en la sección 1.2). Es una constante explícita, no un
-  "/2" escondido en la fórmula.
+- `PULSOS_POR_CICLO = 2` (verificado en Proteus, sección 1.2). Hace lo mismo que el `/2`
+  del original, pero como constante con nombre.
 - Promediar N períodos equivale a medir el tiempo entre el primer y el último flanco. El
   error de cuantización de `micros()` (4 µs) **no se acumula**: es de ±8 µs sobre ~500 ms, es
   decir ±0.002 %.
@@ -180,7 +192,7 @@ Hardware necesario, **solo si se autoriza**:
 | Bajada de la lectura | τ = 9.4 s (asienta en τ·ln(V₁/V₂)) | C1 se descarga solo por R1+R2 |
 | Forma de onda | Hay que suponerla | Detector de pico |
 | Amplitud mínima para la frecuencia | Desconocida (IF pico = 0.44 mA a 2 Vp; 4.9 mA a 10 Vp) | CTR del 4N25 (≥ 20 %), R4 ‖ pull-up interno |
-| Frecuencia máxima | 2 kHz (filtro). En la práctica también la limita el t_off del 4N25 con 10 kΩ | |
+| Frecuencia máxima | ~1 kHz (filtro de 500 µs con 2 flancos por ciclo). En la práctica también la limita el t_off del 4N25 con 10 kΩ | |
 | Precisión del reloj | Resonador cerámico del Uno, ±0.5 % típico | Se corrige con CAL_FRECUENCIA |
 | Aislamiento | Solo la parte de frecuencia está aislada; **A0 está unido galvánicamente a la fuente** | Divisor directo |
 
@@ -197,7 +209,7 @@ Archivo: `medidor_rms_frecuencia/medidor_rms_frecuencia.ino`.
 
 | Cambio | Corrige | Justificación |
 |---|---|---|
-| `PULSOS_POR_CICLO = 1`, sin `/2.0` | E1 | Sección 1.2 |
+| `PULSOS_POR_CICLO = 2`, equivalente al `/2.0` del original | — | Sección 1.2 (verificado en Proteus) |
 | Vrms = Vpico / `FACTOR_CRESTA`, documentado como suposición; Opción B disponible | E2 | Secciones 1.1 y 2.3 |
 | `CAL_GANANCIA` + `CAIDA_PUENTE_V` (calibración en 2 puntos) | E3 | Separa ganancia y offset |
 | `VREF_ADC` y R1/R2/C1 como constantes medibles | E4, E8 | Ganancia derivada de los componentes |
@@ -242,18 +254,22 @@ Frec:  50.00 Hz
 | Corrección de rizado | k = 1/(4·50·9.4) = 0.00053 | 8.4948 V |
 | V_pico | 8.4948 + 1.50 | 9.9948 V |
 | **V_rms** | 9.9948 / √2 | **7.067 V** (real 7.071 V, **−0.05 %**, < 1 LSB) |
-| **f** | 25 períodos de 20000 µs → 10⁶/20000 | **50.00 Hz** |
+| **f** | 50 intervalos de 10000 µs (2 por ciclo) → 10⁶/(10000·2) | **50.00 Hz** |
 
-Con el código original: ADC máximo = 870 → 870·5/1023·2 + 1.5 = 10.004 V → 7.074 V; f = 25.00 Hz.
+Con el código original: ADC máximo = 870 → 870·5/1023·2 + 1.5 = 10.004 V → 7.074 V; f = 50.00 Hz.
 
 ### 4.2 Resultados del banco de pruebas (`pruebas/`, simulación)
 
-**Frecuencia** (senoidal 10 Vp):
+**Frecuencia** (senoidal 10 Vp, modelo con 2 flancos por ciclo, como en Proteus):
 
-| f real (Hz) | 1 | 2 | 5 | 50 | 60 | 400 | 1000 | 1500 |
+| f real (Hz) | 1 | 2 | 5 | 50 | 60 | 400 | 990 | 1100 |
 |---|---|---|---|---|---|---|---|---|
-| Original | 0.50 | 1.00 | 2.50 | 25.00 | 30.00 | 200.0 | 500.0 | 750.0 |
-| **Corregido** | **1.00** | **2.00** | **5.00** | **50.00** | **60.00** | **400.0** | **1000.0** | **1500.0** |
+| Original | 1.00 | 2.00 | 5.00 | 50.00 | 60.00 | 400.0 | 989.2 | 550.0 ✗ |
+| Corregido (completo) | 1.00 | 2.00 | 5.00 | 50.00 | 60.00 | 400.0 | 990.0 | 550.0 ✗ |
+| Corregido (mínimo) | 1.00 | 2.00 | 5.00 | 50.00 | 60.00 | 400.0 | 990.0 | 550.0 ✗ |
+
+Por encima de ~1 kHz, los flancos llegan cada < 500 µs y el filtro descarta uno de cada dos.
+La frecuencia de la señal en sí **no se corrigió**: el original ya la calculaba bien.
 
 **Vrms** (senoidal 50 Hz, modelo con Vf = 0.75 V, igual al supuesto por el código):
 
@@ -397,7 +413,7 @@ seguidas con la señal fija).
    calibración en 2 puntos corrige la parte lineal, no la no lineal.
 5. Resolución de 6.9 mV en Vrms. La exactitud depende de VREF (el 5V del USB varía con la
    carga) y de la calibración.
-6. Frecuencia: entre 0.5 Hz y 2 kHz. Exactitud limitada por el resonador (±0.5 % sin calibrar).
+6. Frecuencia: entre 0.5 Hz y ~1 kHz. Exactitud limitada por el resonador (±0.5 % sin calibrar).
    La amplitud mínima para que el 4N25 conmute está **sin determinar**.
 7. Si se pierde un pulso (señal muy débil o ruidosa), ese período cuenta doble en su ventana.
    La ventana siguiente se recupera sola.
@@ -411,7 +427,7 @@ seguidas con la señal fija).
 4. Puente físico (¿1N4007 discretos?, ¿W10M?, ¿KBP?) y su caída real.
 5. Valores medidos de R1, R2, R3, R4 y C1.
 6. Si en el esquemático el negativo del puente está unido al GND del Arduino.
-7. Captura del osciloscopio de Proteus en D2, para confirmar 1 flanco por ciclo.
+7. Captura del osciloscopio de Proteus en V1 y D2, para documentar los 2 flancos por ciclo y entender qué nodo alimenta a R3.
 8. Fotos del montaje físico.
 
 ---
@@ -445,11 +461,11 @@ Cada conclusión lleva una etiqueta:
 
 | Punto | Conclusión |
 |---|---|
-| Flancos por ciclo | **1** [ESQUEMA]. El LED solo conduce en el semiciclo positivo y D1 lo protege en el negativo. **Confirmarlo** con el osciloscopio en D2 o con el `Periodo` del Serial, que debe ser ≈ 16667 µs (si fuera 8333 µs habría 2 flancos). |
-| Salida del 4N25 | D2 está en LOW mientras v > ~1.2 V (el LED conduce) y en HIGH el resto del tiempo. El flanco de bajada llega ~0.32 ms después del cruce por cero (asin(1.2/10) = 6.9°), con el mismo retardo en cada ciclo, así que **no afecta al período**. D2 está en LOW ~46 % del ciclo. |
-| ¿Dividir entre 2? | **No.** Es la causa de que el original muestre **30.0 Hz** [SIM]. |
-| Precisión de `micros()` | 4 µs de resolución. Con ~30 períodos por ventana de 500 ms, el error es ±8 µs / 500 ms = **±0.002 %**. El límite real es el resonador cerámico del Uno (±0.5 % típico = **±0.3 Hz** a 60 Hz) [HIPÓTESIS]. En Proteus el reloj es exacto. |
-| Filtro de 500 µs | Adecuado. Un pulso de 60 Hz dura ~7.7 ms. El filtro elimina los rebotes del flanco lento del optoacoplador, porque la entrada crece despacio cerca del cruce por cero. |
+| Flancos por ciclo | **2** [VERIFICADO EN PROTEUS]: sin dividir entre 2 se mostraban 120 Hz. La primera versión de este informe decía 1, y era incorrecto. |
+| Salida del 4N25 | D2 baja una vez por semiciclo. El período del Serial ya está multiplicado por PULSOS_POR_CICLO: con 60 Hz debe mostrar ≈ 16667 µs, con N ≈ 60 intervalos por ventana de 500 ms. |
+| ¿Dividir entre 2? | **Sí.** El original lo hacía correctamente. La versión completa usa `PULSOS_POR_CICLO = 2` y la mínima conserva el `/ 2.0`. |
+| Precisión de `micros()` | 4 µs de resolución. Con ~60 intervalos por ventana de 500 ms, el error es ±8 µs / 500 ms = **±0.002 %**. El límite real es el resonador cerámico del Uno (±0.5 % típico = **±0.3 Hz** a 60 Hz) [HIPÓTESIS]. En Proteus el reloj es exacto. |
+| Filtro de 500 µs | Adecuado. Los flancos llegan cada 8.3 ms. El filtro elimina los rebotes del flanco lento del optoacoplador, porque la entrada crece despacio cerca del cruce por cero. |
 | Interrupciones | Correctas en el original (volatile + copia atómica). Se mantienen. |
 | Acumulación y reinicio | Correctos. Se cambió el centinela `0` por una bandera. |
 | Pérdida de pulsos | No hay [CÓDIGO]. Puede haberla si la amplitud es tan baja que el 4N25 no conmuta [HIPÓTESIS]. |
@@ -559,8 +575,8 @@ dependen de esa suposición.
 | Vpico | V_C1 · 1.00044 + 1.50 | ⇒ 10.00 V |
 | **Vrms** | 10.00 / √2 | **7.07 V** |
 | Período | 10⁶ / 60 | **16667 µs** |
-| Períodos por ventana | 500 ms / 16.667 ms | ≈ 30 |
-| **Frecuencia** | 10⁶ / 16667 | **60.00 Hz** |
+| Intervalos por ventana | 500 ms / 8.333 ms | ≈ 60 |
+| **Frecuencia** | 10⁶ / (8333.3 · 2) | **60.00 Hz** |
 
 Sensibilidad (por qué hay que medir y no suponer):
 
@@ -577,19 +593,19 @@ Frec:  60.00 Hz
 Serial esperado (simulado con fuente ideal):
 
 ```
-ADC: 869.5 | Voltaje ADC: 4.246 V | VC1: 8.491 V | Vpico: 9.995 V | Voltaje RMS: 7.068 V | Frecuencia: 60.00 Hz | Periodo: 16667 us | N: 30
+ADC: 869.5 | Voltaje ADC: 4.246 V | VC1: 8.491 V | Vpico: 9.995 V | Voltaje RMS: 7.068 V | Frecuencia: 60.00 Hz | Periodo: 16667 us | N: 60
 ```
 
-El código original, en las mismas condiciones, mostraba `Vrms: 7.07 V` y `Freq: 30.0 Hz`.
+El código original, en las mismas condiciones, muestra `Vrms: 7.07 V` y `Freq: 60.0 Hz`.
 
 Resumen de la simulación [SIM]:
 
 | Caso | Original | Corregido | Referencia |
 |---|---|---|---|
-| Fuente ideal (Proteus) | 7.07 V / 30.0 Hz | 7.07 V / 60.00 Hz | 7.071 V / 60 Hz |
-| Generador 50 Ω en Hi-Z | 6.75 V / 30.0 Hz | 6.74 V / 60.00 Hz | 6.88 V True-RMS en bornes (7.071 V en vacío) |
-| Generador en modo 50 Ω (40 Vpp reales) | 8.13 V / 30.0 Hz, sin aviso | **SATURADO** / 60.00 Hz | 13.7 Vrms (19.0 Vp) en bornes: **riesgo para A0** |
-| Offset +1 V | 7.78 V / 30.0 Hz | 7.77 V / 60.00 Hz | 7.14 V |
+| Fuente ideal (Proteus) | 7.07 V / 60.0 Hz | 7.07 V / 60.00 Hz | 7.071 V / 60 Hz |
+| Generador 50 Ω en Hi-Z | 6.75 V / 60.0 Hz | 6.74 V / 60.00 Hz | 6.88 V True-RMS en bornes (7.071 V en vacío) |
+| Generador en modo 50 Ω (40 Vpp reales) | 8.13 V / 60.0 Hz, sin aviso | **SATURADO** / 60.00 Hz | 13.7 Vrms (19.0 Vp) en bornes: **riesgo para A0** |
+| Offset +1 V | 7.78 V / 59.9 Hz | 7.77 V / 60.00 Hz | 7.14 V |
 
 ### 10.6 Pruebas experimentales con el generador
 

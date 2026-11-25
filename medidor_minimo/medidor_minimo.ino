@@ -1,5 +1,6 @@
 // VERSION MINIMA: es el codigo original con solo los cambios necesarios.
 // Cada cambio esta marcado con "CORREGIDO:" y su motivo.
+// El calculo de frecuencia (con su "/ 2.0") se mantiene igual que el original.
 
 #include <LiquidCrystal.h>
 
@@ -136,10 +137,10 @@ void loop() {
   if ((micros() - ultimoPulso) < 1000000UL) {
     if (conteoCopia > 0) {
       float periodoPromedio = (float)sumaCopia / conteoCopia;
-      // CORREGIDO: se quito el "/ 2.0". El LED del optoacoplador solo
-      // enciende en el semiciclo positivo (D1 lo protege en el negativo), asi
-      // que hay UN flanco FALLING por ciclo. Con el /2, 60 Hz se veia como 30 Hz.
-      frecuencia = 1000000.0 / periodoPromedio;
+      // Se mantiene el "/ 2.0" del original: verificado en Proteus, el circuito
+      // genera 2 flancos FALLING por ciclo (uno por semiciclo). Sin el /2,
+      // 60 Hz se ve como 120 Hz.
+      frecuencia = (1000000.0 / periodoPromedio) / 2.0;
     }
     // Si conteoCopia == 0 (frecuencias muy bajas < 2 Hz), mantiene la ultima frecuencia valida hasta que pase 1 seg
   } else {

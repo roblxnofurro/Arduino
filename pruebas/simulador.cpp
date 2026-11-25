@@ -16,6 +16,7 @@
 //         VSINE de Proteus; 50 = generador de laboratorio). Con rs > 0 se
 //         modela la carga del circuito: rama R3 + LED/D1 y recarga de C1.
 //   vo    offset DC de la fuente (V)
+//   ppc   flancos FALLING por ciclo en D2: 2 (verificado en Proteus) o 1
 #include "Arduino.h"
 #include <random>
 #include <map>
@@ -34,6 +35,7 @@ static std::string pars(const char *k, const char *def) {
 
 static int HW; static std::string FORMA;
 static double VP, VP2, T2, FREQ, VF, VON, RUIDO, RS, VO;
+static int PPC = 2;
 static double vBornesUlt = 0, vBornesMax = -1e9, sumaV2 = 0, tV2 = 0;
 static double vC1 = 0;                       // tension en C1 (hw=0)
 static const double TAU = 20000.0 * 470e-6;  // descarga por R1 + R2
@@ -90,7 +92,9 @@ void simAvanzar(double us) {
       if (v > vBornesMax) vBornesMax = v;
       sumaV2 += v * v * h; tV2 += h;
     }
-    bool led = v > VON;                      // LED conduce solo en semiciclo +
+    // ppc=2 (por defecto, comportamiento verificado en Proteus): un pulso por
+    // semiciclo. ppc=1: el LED solo conduce en el semiciclo positivo.
+    bool led = (PPC == 2) ? fabs(v) > VON : v > VON;
     bool flanco = led && !ledPrev;           // D2 pasa a LOW: flanco FALLING
     ledPrev = led;                           // antes de la ISR: micros() dentro
     if (flanco) dispararIsr();               // de la ISR re-entra aqui
@@ -133,7 +137,7 @@ int main(int argc, char **argv) {
   HW = (int)par("hw", 0); FORMA = pars("forma", "sen");
   VP = par("vp", 10); VP2 = par("vp2", -1); T2 = par("t2", 1e9);
   FREQ = par("f", 50); VF = par("vf", 0.75); VON = par("von", 1.5);
-  RUIDO = par("ruido", 0); RS = par("rs", 0); VO = par("vo", 0);
+  RUIDO = par("ruido", 0); RS = par("rs", 0); PPC = (int)par("ppc", 2); VO = par("vo", 0);
   rng.seed((unsigned)par("seed", 1));
   double duracion = par("t", 6);
   bool traza = par("traza", 0) != 0;
