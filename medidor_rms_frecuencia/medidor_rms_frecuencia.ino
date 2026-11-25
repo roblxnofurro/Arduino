@@ -25,11 +25,17 @@
     MODO_RMS_VERDADERO y AUDITORIA.md). NO se hace ningun cambio de
     hardware sin autorizacion: el modo por defecto es el del circuito actual.
 
-  ESTADO DE CALIBRACION: SIN CALIBRAR.
-    Las constantes de la seccion "CALIBRACION" son provisionales. CAL_OFFSET_V
-    = 1.50 V es el valor heredado del codigo original (ajustado en Proteus
-    para 20 Vpp). No se ha medido en el montaje fisico. Seguir el
-    procedimiento de calibracion de AUDITORIA.md antes de usar las lecturas.
+  SENAL DE REFERENCIA: generador de funciones, senoidal, 60 Hz, 20 Vpp,
+    offset 0 V -> Vp = 10 V, Vrms = 7.071 V, T = 16.667 ms (EN VACIO).
+    El generador tiene 50 ohm de salida y este circuito lo carga: el valor de
+    referencia para comparar es la tension MEDIDA EN LOS BORNES del circuito
+    (osciloscopio), no la que indica la pantalla del generador.
+
+  ESTADO: CONSTANTES FISICAS PENDIENTES DE MEDIR.
+    VREF_ADC, R1_OHM, R2_OHM y CAIDA_PUENTE_V se obtienen MIDIENDO el circuito
+    (procedimiento en AUDITORIA.md, seccion 10.4). No se ajustan para forzar
+    7.07 V. CAIDA_PUENTE_V = 1.50 V es el valor heredado del original y NO
+    esta verificado.
   ============================================================================
 */
 
@@ -81,14 +87,21 @@ const float GANANCIA_DIVISOR = (R1_OHM + R2_OHM) / R2_OHM;
 const float TAU_DESCARGA_S = (R1_OHM + R2_OHM) * C1_FARADIOS;
 
 // ----------------------------------------------------------------------------
-// CALIBRACION (MODO 0) - PROVISIONAL, VER AUDITORIA.md
-//   Vpico_entrada = CAL_GANANCIA * Vpico_C1 + CAL_OFFSET_V
-//   CAL_OFFSET_V representa la caida de los 2 diodos del puente que conducen
-//   (mas cualquier offset). Depende del diodo, la corriente y la temperatura,
-//   por eso se obtiene por calibracion en 2 puntos y no se supone.
+// CAIDA DEL PUENTE (MODO 0)
+//   Vpico_entrada = CAL_GANANCIA * Vpico_C1 + CAIDA_PUENTE_V
+//   Es la caida de los 2 diodos que conducen EN EL INSTANTE DEL PICO, cuando
+//   el puente recarga C1. Depende del modelo de puente, de la corriente de
+//   recarga y de la temperatura. NO se supone: se MIDE asi:
+//     CAIDA_PUENTE_V = Vp en los bornes de entrada (osciloscopio)
+//                    - V_C1 (voltimetro DC sobre C1)
+//   El Serial imprime "VC1" para comprobar tambien VREF_ADC y el divisor.
 // ----------------------------------------------------------------------------
+const float CAIDA_PUENTE_V = 1.50;      // PENDIENTE DE MEDIR (valor del original)
+
+// Correccion de ganancia residual. Dejar en 1.000. Solo se cambia si, con
+// VREF_ADC y R1/R2 ya medidos, la verificacion en varios puntos demuestra un
+// error de ganancia sistematico (procedimiento en AUDITORIA.md).
 const float CAL_GANANCIA = 1.000;
-const float CAL_OFFSET_V = 1.50;        // PROVISIONAL (heredado del original)
 
 // Factor de cresta = Vpico / Vrms de la forma de onda de ENTRADA.
 //   Senoidal: 1.41421356   Cuadrada simetrica: 1.0   Triangular: 1.7320508
@@ -152,6 +165,7 @@ int   adcMaximo = 0;
 int   adcMinimo = 0;
 unsigned int muestrasADC = 0;
 float voltajeA0 = 0;         // tension promedio en el pin A0 (V)
+float voltajeC1 = 0;         // tension continua en C1 reconstruida (V), modo 0
 float voltajePico = 0;       // pico de la senal de entrada (V)
 float voltajeRMS = 0;        // RMS de la senal de entrada (V)
 bool  saturado = false;      // A0 fuera del rango 0..VREF
@@ -274,6 +288,7 @@ void medirVoltajePico(float frecuenciaHz) {
 
   voltajeA0 = adcMedio * VREF_ADC / CUENTAS_ADC;
   float vC1Medio = voltajeA0 * GANANCIA_DIVISOR;
+  voltajeC1 = vC1Medio;             // comparar con un voltimetro DC sobre C1
 
   // Correccion del rizado: con rectificacion de onda completa C1 se descarga
   // durante ~1/(2f) entre recargas. Rizado: dV = Vp / (2 f tau).
@@ -289,7 +304,7 @@ void medirVoltajePico(float frecuenciaHz) {
     voltajePico = 0;                // por debajo de ~2 caidas de diodo el
     voltajeRMS = 0;                 // puente no conduce: no hay medicion
   } else {
-    voltajePico = CAL_GANANCIA * vC1Pico + CAL_OFFSET_V;
+    voltajePico = CAL_GANANCIA * vC1Pico + CAIDA_PUENTE_V;
     voltajeRMS = voltajePico / FACTOR_CRESTA;  // supone forma de onda conocida
   }
 }
@@ -398,6 +413,10 @@ void enviarSerial() {
   Serial.print(adcMedio, 1);
   Serial.print(" | Voltaje ADC: ");
   Serial.print(voltajeA0, 3);
+#if !MODO_RMS_VERDADERO
+  Serial.print(" V | VC1: ");
+  Serial.print(voltajeC1, 3);
+#endif
   Serial.print(" V | Vpico: ");
   Serial.print(voltajePico, 3);
   Serial.print(" V | Voltaje RMS: ");

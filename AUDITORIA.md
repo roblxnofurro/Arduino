@@ -130,7 +130,7 @@ f = CAL_FRECUENCIA · 10⁶ / (T_eventos · PULSOS_POR_CICLO)   [Hz]
 V_A0      = (Σ ADC / N) · VREF_ADC / 1024
 V_C1      = V_A0 · (R1 + R2) / R2
 V_C1,pico = V_C1 / (1 − 1/(4·f·τ))           (corrección del rizado, τ = (R1+R2)·C1)
-V_pico    = CAL_GANANCIA · V_C1,pico + CAL_OFFSET_V
+V_pico    = CAL_GANANCIA · V_C1,pico + CAIDA_PUENTE_V
 V_rms     = V_pico / FACTOR_CRESTA            (√2 si la entrada es senoidal)
 ```
 
@@ -138,8 +138,8 @@ V_rms     = V_pico / FACTOR_CRESTA            (√2 si la entrada es senoidal)
   ruido aleatorio en un factor de ~√N.
 - **Corrección del rizado:** el promedio del diente de sierra es `Vp − ΔV/2`. Con el hardware
   actual vale 0.05 %; se incluye para que el código siga siendo correcto si se reduce C1.
-- **CAL_OFFSET_V** representa la caída de los 2 diodos que conducen. **No se supone**: se
-  obtiene por calibración en 2 puntos (Fase 5). El valor 1.50 V es provisional.
+- **CAIDA_PUENTE_V** representa la caída de los 2 diodos que conducen. **No se supone**: se
+  **mide** como `Vp en bornes − V_C1` (sección 10.4). El valor 1.50 V es provisional.
 - **FACTOR_CRESTA** queda como constante explícita y documentada. Con este hardware **es
   imposible** medir la forma de onda, así que el Vrms solo es correcto si se conoce.
 
@@ -199,7 +199,7 @@ Archivo: `medidor_rms_frecuencia/medidor_rms_frecuencia.ino`.
 |---|---|---|
 | `PULSOS_POR_CICLO = 1`, sin `/2.0` | E1 | Sección 1.2 |
 | Vrms = Vpico / `FACTOR_CRESTA`, documentado como suposición; Opción B disponible | E2 | Secciones 1.1 y 2.3 |
-| `CAL_GANANCIA` + `CAL_OFFSET_V` (calibración en 2 puntos) | E3 | Separa ganancia y offset |
+| `CAL_GANANCIA` + `CAIDA_PUENTE_V` (calibración en 2 puntos) | E3 | Separa ganancia y offset |
 | `VREF_ADC` y R1/R2/C1 como constantes medibles | E4, E8 | Ganancia derivada de los componentes |
 | Promedio en lugar de máximo, ventana de 100 ms | E5 | Estimador insesgado |
 | Detección de saturación → `"Vrms: SATURADO"` y aviso por Serial | E7 | No mostrar valores falsos |
@@ -269,7 +269,7 @@ Con el código original: ADC máximo = 870 → 870·5/1023·2 + 1.5 = 10.004 V �
 
 **Caída real del diodo distinta de la supuesta** (corregido sin calibrar → calibrado en 2 puntos).
 Simulación con Vf = 0.55 V/diodo. La calibración con 4 Vp y 10 Vp dio
-CAL_GANANCIA = 0.9995 y CAL_OFFSET_V = 1.109:
+CAL_GANANCIA = 0.9995 y CAIDA_PUENTE_V = 1.109:
 
 | Vp | Real | Sin calibrar | Calibrado |
 |---|---|---|---|
@@ -320,17 +320,24 @@ Para reproducir: `cd pruebas && ./ejecutar_pruebas.sh bin && ./bin/sim_corregido
    qué el circuito no coincide con el esquemático).
 4. Comprobar que el negativo del puente está unido al GND del Arduino.
 
-### 5.3 Calibración de voltaje en 2 puntos (modo 0)
+### 5.3 Verificación en 2 puntos (modo 0), después de medir los componentes
+
+> Primero se miden VREF_ADC, R1, R2 y CAIDA_PUENTE_V (sección 10.4). Este procedimiento
+> sirve para **comprobar** que no queda un error de ganancia sistemático. Va y Vb deben ser
+> picos **medidos en los bornes** con el osciloscopio, no los indicados por el generador.
+> Si la ganancia resultante difiere de 1 en más de ~1 %, hay que revisar las mediciones de
+> los componentes antes de aceptarla.
+
 
 1. Aplicar una amplitud baja conocida **Va** (por ejemplo ~30 % del máximo) y esperar
    **15 s** (por τ). Anotar el `Vpico` del Serial como **Ma**.
 2. Aplicar una amplitud alta **Vb** (~90 % del máximo, sin SATURADO) y esperar. Anotar **Mb**.
    Si la referencia mide Vrms, el pico es Vrms·√2 (solo para senoidal).
-3. Con los valores actuales del código G₀ y O₀ (al principio 1.000 y 1.50):
+3. Con los valores actuales del código G₀ = CAL_GANANCIA y O₀ = CAIDA_PUENTE_V:
    ```
    Ca = (Ma − O₀)/G₀        Cb = (Mb − O₀)/G₀
    CAL_GANANCIA = (Vb − Va) / (Cb − Ca)
-   CAL_OFFSET_V = Va − CAL_GANANCIA · Ca
+   CAIDA_PUENTE_V = Va − CAL_GANANCIA · Ca
    ```
 4. Escribir los valores, cargar de nuevo y **verificar en puntos distintos** de los de calibración.
 
@@ -406,3 +413,231 @@ seguidas con la señal fija).
 6. Si en el esquemático el negativo del puente está unido al GND del Arduino.
 7. Captura del osciloscopio de Proteus en D2, para confirmar 1 flanco por ciclo.
 8. Fotos del montaje físico.
+
+---
+
+## 10. Revisión con la señal real del generador (60 Hz, 20 Vpp, senoidal, offset 0 V)
+
+**Referencia en vacío del generador:** Vp = 10 V, Vpp = 20 V, Vrms = 10/√2 = 7.071 V,
+f = 60 Hz, T = 16.667 ms.
+
+Cada conclusión lleva una etiqueta:
+
+- **[CÓDIGO]**: comprobado leyendo el código.
+- **[ESQUEMA]**: deducido del esquemático.
+- **[SIM]**: comprobado en el banco de pruebas (modelo, no medición).
+- **[HIPÓTESIS]**: pendiente de medir.
+
+### 10.1 Auditoría de voltaje: respuestas punto por punto
+
+| # | Pregunta | Respuesta |
+|---|---|---|
+| 1 | ¿25 ms capturan el pico? | A 60 Hz son 1.5 ciclos, así que sí. Pero **no hay pico que capturar**: en A0 hay continua porque C1 retiene el pico. El problema del original no era la duración, sino usar el máximo, que está sesgado por el ruido. [ESQUEMA][SIM] |
+| 2 | ¿La frecuencia de muestreo es suficiente? | `analogRead` tarda ~112 µs → ~8.9 kS/s → ~149 muestras por ciclo a 60 Hz. Si A0 recibiera la onda, el error máximo al buscar el pico sería del 0.02 %. Para RMS verdadero (Opción B) también sobra. [CÓDIGO] |
+| 3 | ¿El puente produce onda completa? | Sí, pero C1 la filtra: lo que llega al divisor es continua con un rizado de **7.5 mV** a 60 Hz (8.5 V / (2·60·9.4 s)). [ESQUEMA] |
+| 4 | ¿Cuál es la caída real del puente? | **No se puede saber sin medirla.** El 1.50 V es un valor ajustado en Proteus, no medido. Se determina como `Vp en bornes − V_C1` (sección 10.4). En Proteus, si el voltímetro DC sobre C1 marca 8.50 V con 10 Vp, el 1.50 V queda confirmado para ese modelo. [HIPÓTESIS] |
+| 5 | ¿El divisor es 2? | Nominalmente sí: (10k+10k)/10k = 2. Con resistencias del 5 %, el peor caso va de 1.905 a 2.105 (**±5 %** de error en todas las lecturas). Hay que medir R1 y R2. [ESQUEMA] |
+| 6 | ¿Afecta el offset DC? | Con este circuito, **sí y mucho**. El puente carga C1 al mayor de los dos picos: Vp + \|Vo\|. Con Vo = ±1 V el programa marca 7.77 V, mientras que el RMS real es √(7.071² + 1²) = 7.14 V (**+8.8 %**). La frecuencia no se ve afectada (60.00 Hz). Como está confirmado Vo = 0, no aplica, pero conviene comprobarlo con el osciloscopio en acoplamiento DC. [SIM] |
+| 7 | ¿Señal rectificada o polarizada? | **Rectificada y retenida en el pico.** No hay polarización (offset) en A0. [ESQUEMA] |
+| 8 | ¿La fórmula corresponde al circuito? | `Vrms = (V_C1 + caída del puente)/√2` es válida **si la onda en bornes es senoidal y sin offset**. `√(ΣVi²/N)` **no** se puede aplicar a A0 con este hardware (sección 1.1). [ESQUEMA] |
+
+### 10.2 Auditoría de frecuencia a 60 Hz
+
+| Punto | Conclusión |
+|---|---|
+| Flancos por ciclo | **1** [ESQUEMA]. El LED solo conduce en el semiciclo positivo y D1 lo protege en el negativo. **Confirmarlo** con el osciloscopio en D2 o con el `Periodo` del Serial, que debe ser ≈ 16667 µs (si fuera 8333 µs habría 2 flancos). |
+| Salida del 4N25 | D2 está en LOW mientras v > ~1.2 V (el LED conduce) y en HIGH el resto del tiempo. El flanco de bajada llega ~0.32 ms después del cruce por cero (asin(1.2/10) = 6.9°), con el mismo retardo en cada ciclo, así que **no afecta al período**. D2 está en LOW ~46 % del ciclo. |
+| ¿Dividir entre 2? | **No.** Es la causa de que el original muestre **30.0 Hz** [SIM]. |
+| Precisión de `micros()` | 4 µs de resolución. Con ~30 períodos por ventana de 500 ms, el error es ±8 µs / 500 ms = **±0.002 %**. El límite real es el resonador cerámico del Uno (±0.5 % típico = **±0.3 Hz** a 60 Hz) [HIPÓTESIS]. En Proteus el reloj es exacto. |
+| Filtro de 500 µs | Adecuado. Un pulso de 60 Hz dura ~7.7 ms. El filtro elimina los rebotes del flanco lento del optoacoplador, porque la entrada crece despacio cerca del cruce por cero. |
+| Interrupciones | Correctas en el original (volatile + copia atómica). Se mantienen. |
+| Acumulación y reinicio | Correctos. Se cambió el centinela `0` por una bandera. |
+| Pérdida de pulsos | No hay [CÓDIGO]. Puede haberla si la amplitud es tan baja que el 4N25 no conmuta [HIPÓTESIS]. |
+| Estabilidad | [SIM]: 60.00 Hz en todas las ventanas, incluso con un generador de 50 Ω y con offset. |
+
+### 10.3 El generador de funciones: 50 Ω y Hi-Z
+
+Este factor **no está en el código** y puede explicar por sí solo que las lecturas no
+coincidan con la pantalla del generador.
+
+**a) Modo de carga configurado [SIM].** Muchos generadores muestran la amplitud suponiendo
+una carga de 50 Ω. Si está en modo "50 Ω" y se conecta a este circuito, que es de alta
+impedancia, la tensión real es **el doble: 40 Vpp (20 Vp)**.
+
+- En la simulación, C1 llega a **17.5 V**, así que A0 recibiría **~8.8 V**, por encima del
+  máximo absoluto del ATmega328P (VCC + 0.5 V). El programa corregido muestra `SATURADO`;
+  el original mostraba 8.13 V sin avisar.
+- **Riesgo de dañar A0.** Antes de conectar: poner el generador en **Hi-Z ("High Z")** y
+  comprobar con el osciloscopio que en los bornes hay 20 Vpp.
+
+**b) Aunque esté en Hi-Z, la salida sigue teniendo 50 Ω [SIM, modelo simplificado].** El
+circuito consume corriente del generador:
+
+- Rama R3 + LED: ~4.9 mA en el pico positivo.
+- Rama R3 + D1: ~5.2 mA en el pico negativo.
+- Pulsos de recarga de C1 a través del puente, justo en los picos.
+
+Resultado estimado con 50 Ω:
+
+| Magnitud | Generador en vacío | En bornes del circuito | Programa corregido |
+|---|---|---|---|
+| Vp | 10.000 V | 9.54 V (cima aplanada) | 9.53 V |
+| Vrms | 7.071 V | 6.88 V (True-RMS) | **6.74 V** |
+| f | 60 Hz | 60 Hz | 60.00 Hz |
+
+Interpretación:
+
+- El instrumento mide bien el **pico que realmente recibe** (9.53 frente a 9.54 V).
+- Esa tensión es ~4.6 % menor que la del generador en vacío. Es una caída real, no un error
+  del programa.
+- Además, la carga aplana la cima de la onda, que deja de ser senoidal. Por eso `Vp/√2`
+  queda ~2 % por debajo del RMS verdadero en bornes.
+- **No se debe "calibrar" para que marque 7.07 V**, porque se estaría ocultando un efecto
+  físico. La referencia correcta es la **tensión medida en los bornes** con el osciloscopio
+  o con un multímetro True-RMS.
+- Con la Opción B (entrada de 43 kΩ, sin puente ni C1), la simulación da 6.90 V frente a
+  6.90 V True-RMS en bornes. Mide el RMS real aunque la onda esté deformada.
+- Los valores 9.54 V y 6.88 V salen de un modelo con diodos ideales más una caída fija y
+  50 Ω puros. **Hay que medirlos.**
+
+**c) Tierras [HIPÓTESIS, verificar].** La malla del BNC del generador y la pinza de tierra
+del osciloscopio suelen estar conectadas a la tierra de la red. Si el Arduino se alimenta
+por USB desde un PC de sobremesa, su GND (que es el − del puente) también suele estarlo.
+Si la malla del generador va a una entrada del puente, **uno de los diodos queda
+cortocircuitado por la tierra**:
+
+- El puente pasa a ser de media onda, con **una sola** caída de diodo.
+- El generador queda cortocircuitado en el semiciclo negativo, limitado por sus 50 Ω.
+- La lectura subiría unos +0.5 V en Vrms (≈ Vf/√2), y la onda negativa quedaría recortada
+  en el osciloscopio.
+
+Cómo comprobarlo:
+
+- Con todo enchufado y apagado, medir continuidad entre la malla del generador y el GND
+  del Arduino.
+- Si hay continuidad, alimentar el Arduino desde un portátil **con batería** (o con un
+  aislador USB). Otra opción es usar un transformador de aislamiento entre el generador y
+  el circuito.
+- **Nunca** poner la pinza de tierra del osciloscopio en el GND del Arduino mientras otra
+  sonda está en la entrada del puente.
+
+### 10.4 Medición de las constantes físicas (sin ajustar para forzar 7.07 V)
+
+Con el generador en **Hi-Z**, 60 Hz, 20 Vpp, offset 0 V, conectado, y **esperando 30 s**:
+
+1. **VREF_ADC:** multímetro DC entre 5V y GND del Arduino, con el LCD conectado.
+2. **Divisor, medido en el circuito:** con un multímetro **de batería** (flotante), medir
+   la tensión DC sobre C1 (`V_C1,med`) y entre A0 y GND (`V_A0,med`). La relación real es
+   `V_C1,med / V_A0,med`. Con el circuito apagado y R1/R2 desconectadas, medir R1 y R2 y
+   escribirlas en `R1_OHM` y `R2_OHM`. Ambos métodos deben coincidir en menos del 1 %.
+3. **Comprobación de VREF y del divisor:** el campo `VC1` del Serial debe coincidir con
+   `V_C1,med` en menos del 1 %. Si no coincide, VREF_ADC o R1/R2 están mal medidos.
+4. **Pico en bornes:** osciloscopio en las dos entradas AC del puente, con la pinza de
+   tierra en el lado de la malla del generador (sección 10.3c), en acoplamiento DC. Anotar
+   `Vp,bornes` (comprobando también que la media es 0 V) y la frecuencia.
+5. **Caída del puente:** `CAIDA_PUENTE_V = Vp,bornes − V_C1,med`. Escribirla y cargar el
+   programa.
+6. **CAL_GANANCIA** se queda en 1.000. Solo se modifica si la verificación en varios puntos
+   (sección 5.3) muestra un error de ganancia sistemático después de los pasos 1–5.
+
+**En Proteus**, los pasos equivalentes son: un DC voltmeter sobre C1 y otro en A0, y el
+osciloscopio ARD1 para el pico y para D2. VREF es 5.00 V exactos y VSINE es una fuente
+ideal sin 50 Ω.
+
+### 10.5 Validación teórica a 60 Hz y 20 Vpp
+
+Se supone una caída del puente de 1.50 V, sin verificar. El símbolo ⇒ indica valores que
+dependen de esa suposición.
+
+| Magnitud | Cálculo | Valor esperado |
+|---|---|---|
+| V_C1 | 10 − 1.50 | ⇒ 8.50 V |
+| V_A0 | 8.50 / 2 | ⇒ 4.25 V |
+| ADC | 4.25 · 1024 / 5 | ⇒ 870.4 |
+| Rizado en C1 | 8.5 / (2·60·9.4) | 7.5 mV |
+| Corrección del rizado | 1 / (1 − 1/(4·60·9.4)) | ×1.00044 |
+| Vpico | V_C1 · 1.00044 + 1.50 | ⇒ 10.00 V |
+| **Vrms** | 10.00 / √2 | **7.07 V** |
+| Período | 10⁶ / 60 | **16667 µs** |
+| Períodos por ventana | 500 ms / 16.667 ms | ≈ 30 |
+| **Frecuencia** | 10⁶ / 16667 | **60.00 Hz** |
+
+Sensibilidad (por qué hay que medir y no suponer):
+
+- Un error de **0.1 V** en la caída del puente → 0.071 V en Vrms (**1.0 %**).
+- Un error del **1 %** en VREF o en el divisor → **0.85 %** en Vrms.
+
+Pantalla esperada (con fuente ideal, como en Proteus):
+
+```
+Vrms:  7.07 V
+Frec:  60.00 Hz
+```
+
+Serial esperado (simulado con fuente ideal):
+
+```
+ADC: 869.5 | Voltaje ADC: 4.246 V | VC1: 8.491 V | Vpico: 9.995 V | Voltaje RMS: 7.068 V | Frecuencia: 60.00 Hz | Periodo: 16667 us | N: 30
+```
+
+El código original, en las mismas condiciones, mostraba `Vrms: 7.07 V` y `Freq: 30.0 Hz`.
+
+Resumen de la simulación [SIM]:
+
+| Caso | Original | Corregido | Referencia |
+|---|---|---|---|
+| Fuente ideal (Proteus) | 7.07 V / 30.0 Hz | 7.07 V / 60.00 Hz | 7.071 V / 60 Hz |
+| Generador 50 Ω en Hi-Z | 6.75 V / 30.0 Hz | 6.74 V / 60.00 Hz | 6.88 V True-RMS en bornes (7.071 V en vacío) |
+| Generador en modo 50 Ω (40 Vpp reales) | 8.13 V / 30.0 Hz, sin aviso | **SATURADO** / 60.00 Hz | 13.7 Vrms (19.0 Vp) en bornes: **riesgo para A0** |
+| Offset +1 V | 7.78 V / 30.0 Hz | 7.77 V / 60.00 Hz | 7.14 V |
+
+### 10.6 Pruebas experimentales con el generador
+
+Configuración en todas las pruebas: **Hi-Z**, senoidal, offset 0 V, verificación previa de
+tierras (10.3c) y espera de 30 s tras cada cambio de amplitud. En cada punto se anotan
+10 lecturas del Serial y se calcula su media y su desviación.
+
+- `Error vs bornes = (Arduino − bornes)/bornes · 100`: **evalúa el instrumento**.
+- `Error vs generador = (Arduino − generador)/generador · 100`: incluye la carga y la
+  impedancia del generador.
+
+**Tabla 1. Punto principal.** A rellenar con mediciones reales:
+
+| Parámetro | Configurado en generador | Medido en bornes (osciloscopio / True-RMS) | Medido por Arduino | Error vs bornes (%) | Error vs generador (%) |
+|---|---|---|---|---|---|
+| Frecuencia | 60 Hz | | | | |
+| Período | 16.667 ms | | | | |
+| Vpp | 20 V | | — | | |
+| Vpico | 10 V | | | | |
+| Vrms | 7.071 V | | | | |
+| Offset | 0 V | | — | | |
+
+**Tabla 2. Frecuencia** (20 Vpp). A rellenar con mediciones reales:
+
+| f configurada (Hz) | f en osciloscopio | f Arduino | Período Serial (µs) | Error (%) |
+|---|---|---|---|---|
+| 10 | | | | |
+| 30 | | | | |
+| 60 | | | | |
+| 120 | | | | |
+| 500 | | | | |
+| 1000 | | | | |
+
+**Tabla 3. Amplitud** (60 Hz). A rellenar con mediciones reales:
+
+| Vpp configurado | Vp en bornes | Vrms True-RMS en bornes | Vrms Arduino | Error vs bornes (%) |
+|---|---|---|---|---|
+| 6 | | | | |
+| 10 | | | | |
+| 14 | | | | |
+| 20 | | | | |
+| 22 (debe acercarse a SATURADO) | | | | |
+
+**Tabla 4. Pruebas de robustez:**
+
+| Prueba | Procedimiento | Resultado esperado | Resultado medido |
+|---|---|---|---|
+| Amplitud mínima para la frecuencia | Bajar Vpp hasta que aparezca `---` | Desconocido (depende del CTR del 4N25) | |
+| Bajada tras un escalón | 20 → 10 Vpp; medir el tiempo hasta ±1 % | ≈ τ·ln(8.5/3.5) ≈ 8–9 s | |
+| Señal desconectada | Quitar el generador | f = `---` en ≤ 2 s; Vrms baja a 0 en ~50 s (C1) | |
+| Estabilidad | 20 lecturas a 60 Hz / 20 Vpp | Desviación ≤ 1 LSB (6.9 mV) y ≤ 0.01 Hz | |

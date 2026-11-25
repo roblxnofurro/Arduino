@@ -12,6 +12,10 @@
 //   forma sen | cuad | tri ; vp = amplitud pico ; f = Hz
 //   von   tension de entrada a partir de la cual el 4N25 lleva D2 a LOW
 //   ruido ruido gaussiano del ADC en LSB rms (0 = Proteus ideal)
+//   rs    resistencia de salida del generador en ohm (0 = fuente ideal, como
+//         VSINE de Proteus; 50 = generador de laboratorio). Con rs > 0 se
+//         modela la carga del circuito: rama R3 + LED/D1 y recarga de C1.
+//   vo    offset DC de la fuente (V)
 #include "Arduino.h"
 #include <random>
 #include <map>
@@ -29,7 +33,8 @@ static std::string pars(const char *k, const char *def) {
 }
 
 static int HW; static std::string FORMA;
-static double VP, VP2, T2, FREQ, VF, VON, RUIDO;
+static double VP, VP2, T2, FREQ, VF, VON, RUIDO, RS, VO;
+static double vBornesUlt = 0, vBornesMax = -1e9, sumaV2 = 0, tV2 = 0;
 static double vC1 = 0;                       // tension en C1 (hw=0)
 static const double TAU = 20000.0 * 470e-6;  // descarga por R1 + R2
 static bool ledPrev = false;
@@ -42,9 +47,9 @@ static double vin(double tu) {
   double amp = (VP2 >= 0 && tu >= T2 * 1e6) ? VP2 : VP;
   double fase = 2 * M_PI * FREQ * tu * 1e-6;
   double s = sin(fase);
-  if (FORMA == "cuad") return amp * (s >= 0 ? 1 : -1);
-  if (FORMA == "tri") return amp * (2 / M_PI) * asin(s);
-  return amp * s;
+  if (FORMA == "cuad") return VO + amp * (s >= 0 ? 1 : -1);
+  if (FORMA == "tri") return VO + amp * (2 / M_PI) * asin(s);
+  return VO + amp * s;
 }
 
 static void dispararIsr() {
@@ -58,11 +63,32 @@ void simAvanzar(double us) {
   while (t_us < objetivo) {
     double h = std::min(2.0, objetivo - t_us);
     t_us += h;
-    double v = vin(t_us);
-    if (HW == 0) {
+    double vs = vin(t_us);                   // FEM del generador
+    double v = vs;                           // tension en bornes del circuito
+    if (RS > 0) {
+      // Rama R3 (1.8k) + LED (~1.2 V) / D1 en antiparalelo (~0.7 V)
+      double vt = vs;
+      if (vs > 1.2) vt = (vs * 1800 + RS * 1.2) / (1800 + RS);
+      else if (vs < -0.7) vt = (vs * 1800 - RS * 0.7) / (1800 + RS);
+      v = vt;
+      if (HW == 0 && fabs(vt) - 2 * VF > vC1) {   // el puente recarga C1
+        double iOpto = fabs(vt) > 1.2 ? (fabs(vt) - (vt > 0 ? 1.2 : 0.7)) / 1800 : 0;
+        double iPuente = (fabs(vs) - vC1 - 2 * VF) / RS - iOpto;
+        if (iPuente > 0) {
+          vC1 += iPuente * h * 1e-6 / 470e-6;
+          v = (vs > 0 ? 1 : -1) * (vC1 + 2 * VF);
+        }
+      }
+      if (HW == 0) vC1 -= vC1 / 20000.0 * h * 1e-6 / 470e-6;   // divisor
+    } else if (HW == 0) {
       double vrect = fabs(v) - 2 * VF;       // puente: conducen 2 diodos
       if (vrect > vC1) vC1 = vrect;          // carga (fuente ideal, Proteus)
       else vC1 *= exp(-h * 1e-6 / TAU);      // descarga por el divisor
+    }
+    vBornesUlt = v;
+    if (t_us > (par("t", 6) - 1) * 1e6) {   // ultimo segundo: pico y RMS en bornes
+      if (v > vBornesMax) vBornesMax = v;
+      sumaV2 += v * v * h; tV2 += h;
     }
     bool led = v > VON;                      // LED conduce solo en semiciclo +
     bool flanco = led && !ledPrev;           // D2 pasa a LOW: flanco FALLING
@@ -81,7 +107,7 @@ void interrupts() {
   if (pendiente && !enIsr) { pendiente = false; dispararIsr(); }
 }
 int analogRead(uint8_t) {
-  double va0 = (HW == 0) ? vC1 * 10000.0 / 20000.0 : 2.5 + 0.2326 * vin(t_us);
+  double va0 = (HW == 0) ? vC1 * 10000.0 / 20000.0 : 2.5 + 0.2326 * (RS > 0 ? vBornesUlt : vin(t_us));
   double cuentas = va0 * 1024.0 / 5.0 + RUIDO * gauss(rng);
   int x = (int)floor(cuentas);
   if (x < 0) x = 0;
@@ -107,7 +133,7 @@ int main(int argc, char **argv) {
   HW = (int)par("hw", 0); FORMA = pars("forma", "sen");
   VP = par("vp", 10); VP2 = par("vp2", -1); T2 = par("t2", 1e9);
   FREQ = par("f", 50); VF = par("vf", 0.75); VON = par("von", 1.5);
-  RUIDO = par("ruido", 0);
+  RUIDO = par("ruido", 0); RS = par("rs", 0); VO = par("vo", 0);
   rng.seed((unsigned)par("seed", 1));
   double duracion = par("t", 6);
   bool traza = par("traza", 0) != 0;
@@ -121,7 +147,9 @@ int main(int argc, char **argv) {
       if (traza) printf("t=%7.3f s | %s", t_us / 1e6, ultima.c_str());
     }
   }
-  printf("RESULTADO vrms=%.4f f=%.4f vpico=%.4f lcd0=[%s] lcd1=[%s]\n",
-         voltajeRMS, frecuencia, voltajePico, lcd.pantalla[0], lcd.pantalla[1]);
+  printf("RESULTADO vrms=%.4f f=%.4f vpico=%.4f lcd0=[%s] lcd1=[%s] "
+         "vc1_real=%.4f vp_bornes=%.4f vrms_bornes=%.4f\n",
+         voltajeRMS, frecuencia, voltajePico, lcd.pantalla[0], lcd.pantalla[1],
+         vC1, vBornesMax, tV2 > 0 ? sqrt(sumaV2 / tV2) : 0.0);
   return 0;
 }
